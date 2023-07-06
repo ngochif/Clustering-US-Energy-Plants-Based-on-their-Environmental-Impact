@@ -1,0 +1,165 @@
+---
+title: "Kmeans"
+author: "Franklin Ngochi"
+date: "2023-05-07"
+output:
+  word_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Loading required libraries and setting seed
+```{r}
+set.seed(1243)
+library(dplyr)
+library(factoextra)
+library(caret)
+
+```
+#### Load fuel receipts data
+```{r}
+Fuel<-read.csv(file="C:\\Users\\ngoch\\OneDrive\\Documents\\KSU\\Fundamentals of Machine Learning\\fuel_receipts_costs_eia923.csv", header=TRUE, sep=",")
+
+#dropping variables with more than 50% NAs and rows with NAs.
+Fuel<-Fuel[,colSums(is.na(Fuel))<0.5*nrow(Fuel)]
+
+#Sampling 2% of data.
+Fuel<-Fuel[sample(nrow(Fuel), floor(0.02*nrow(Fuel))),]
+
+#Assigning proper classes to variables
+Fuel<- Fuel%>%mutate(plant_id_eia= as.factor(plant_id_eia),contract_type_code = as.factor(contract_type_code), energy_source_code=as.factor(energy_source_code), fuel_type_code_pudl=as.factor(fuel_type_code_pudl),fuel_group_code=as.factor(fuel_group_code), supplier_name=as.factor(supplier_name), primary_transportation_mode_code=as.factor(primary_transportation_mode_code), secondary_transportation_mode_code=as.factor(secondary_transportation_mode_code), natural_gas_transport_code=as.factor(natural_gas_transport_code))
+Fuel$contract_expiration_date<-as.Date(Fuel$contract_expiration_date)
+nrow(Fuel)
+```
+#Data exploration
+```{r}
+summary(Fuel[,-1])
+
+total_fuel_cost <- Fuel %>%group_by(fuel_type_code_pudl) %>%summarize(total_cost = sum(fuel_cost_per_mmbtu))
+total_fuel_cost
+
+# Create bar plot
+ggplot(total_fuel_cost, aes(x = fuel_type_code_pudl, y = total_cost)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  labs(x = "Fuel Type", y = "Total Fuel Cost ($)", title = "Total Fuel Cost by Fuel Type")
+
+#Boxplot of fuel costs by fuel type
+ggplot(data = Fuel, aes(x = fuel_type_code_pudl, y = fuel_cost_per_mmbtu)) +
+  geom_boxplot() +
+  xlab("Fuel Type") +
+  ylab("Fuel Cost per MMBtu") +
+  ggtitle("Fuel Costs by Fuel Type")
+
+#Scatterplot of fuel costs vs. fuel quantity
+ggplot(data = Fuel, aes(x = fuel_received_units, y = fuel_cost_per_mmbtu)) +
+  geom_point() +
+  xlab("Fuel Quantity Burned") +
+  ylab("Fuel Cost per MMBtu") +
+  ggtitle("Fuel Costs vs. Fuel Quantity")
+
+#Fuel Cost per MMBtu vs. Fuel Energy Content
+ggplot(data=Fuel, aes(x = fuel_mmbtu_per_unit, y = fuel_cost_per_mmbtu)) + 
+  geom_point() +
+  labs(title = "Fuel Cost per MMBtu vs. Fuel Energy Content",
+       x = "Fuel Energy Content (MMBtu)",
+       y = "Fuel Cost per MMBtu ($/MMBtu)") +
+  geom_smooth(method = "lm", se = FALSE)
+
+#Fuel Cost per MMBtu by Fuel Type and Generation Source
+ggplot(data=Fuel, aes(x = fuel_type_code_pudl, y = fuel_cost_per_mmbtu, fill = fuel_group_code)) +
+  geom_bar(stat = "identity") +
+  labs(title = "Fuel Cost per MMBtu by Fuel Type and Generation Source",
+       x = "Fuel Type",
+       y = "Fuel Cost per MMBtu ($/MMBtu)") +
+  scale_fill_manual(values = c("gray50", "gray70", "green", "blue", "red")) +
+  theme(legend.position = "bottom")
+
+#Fuel Cost per MMBtu by Fuel Type and Generation Source
+ggplot(data=Fuel, aes(x = fuel_type_code_pudl, y = fuel_received_units, fill = fuel_group_code)) +
+  geom_bar(stat = "identity") +
+  labs(title = "Fuel Use by Fuel Type and Generation Source",
+       x = "Fuel Type",
+       y = "Fuel Received") +
+  scale_fill_manual(values = c("gray50", "gray70", "green", "blue", "red")) +
+  theme(legend.position = "bottom")
+
+```
+
+#Select variables to perform Kmeans clustering of power plants by fuel usage pattern
+
+```{r}
+# Select a subset of variables relevant to fuel usage
+fuel_vars <- Fuel %>%select(plant_id_eia_label,fuel_type_code_pudl, fuel_mmbtu_per_unit, sulfur_content_pct, ash_content_pct, mercury_content_ppm) %>%na.omit()
+
+
+fuel_vars$fuel_type_code_pudl<-as.factor(fuel_vars$fuel_type_code_pudl)
+fuel_vars$plant_id_eia_label<-as.factor(fuel_vars$plant_id_eia_label)
+
+```
+
+#Data transformation and scaling
+```{r}
+#Transform factor variable to dummy
+dummy_fuel<-fastDummies::dummy_cols(fuel_vars, select_columns = c("fuel_type_code_pudl"), remove_first_dummy = FALSE,  remove_selected_columns = TRUE)
+
+#Split 75/25 between training and validation set
+train_idx <- createDataPartition(y = dummy_fuel$fuel_mmbtu_per_unit, p = 0.75, list = FALSE)
+train_data <- dummy_fuel[train_idx, ]
+test_data <- dummy_fuel[-train_idx, ]
+
+# Scale the variables
+scaled_train <- scale(train_data[, -c(1)])
+scaled_test <- scale(test_data[, -c(1)])
+```
+
+## Determine the optimal number of clusters
+```{r}
+nb_clusters <- fviz_nbclust(scaled_train, kmeans, method = 'silhouette')
+nb_clusters
+```
+
+# Perform kmeans clustering on training data for k=4
+```{r}
+kmeans_model <- kmeans(scaled_train, centers = 4)
+paste(kmeans_model$centers)
+kmeans_model$size
+kmeans_model$centers
+plot(kmeans_model$centers)
+#Visualize clusters
+fviz_cluster(kmeans_model, data=scaled_train)
+```
+
+
+##EXTRA CREDIT
+#Use multiple-linear regression to determine the best set of variables to predict fuel_cost_per_mmbtu
+```{r}
+# Select a subset of variables relevant to fuel cost
+fuel_vars1 <- Fuel %>%select(fuel_cost_per_mmbtu, fuel_received_units, fuel_type_code_pudl, fuel_mmbtu_per_unit) %>%na.omit()
+fuel_vars1$fuel_type_code_pudl<-as.factor(fuel_vars1$fuel_type_code_pudl)
+
+#Transform factor variable to dummy
+dummy_fuel1<-fastDummies::dummy_cols(fuel_vars1, select_columns = c("fuel_type_code_pudl","primary_transportation_mode_code", "secondary_transportation_mode_code", "natural_gas_transport_code"), remove_first_dummy = FALSE,  remove_selected_columns = TRUE)
+
+#Split 75/25 between training and validation set
+train_idx1 <- createDataPartition(y = dummy_fuel1$fuel_cost_per_mmbtu, p = 0.75, list = FALSE)
+train_data1 <- dummy_fuel1[train_idx, ]
+test_data1 <- dummy_fuel1[-train_idx, ]
+model <- lm(fuel_cost_per_mmbtu~ ., data = train_data1)
+
+summary(model) 
+# From model summary, we cannot reject the null hypothesis that the coefficient of "fuel_mmbtu_per_unit" is equal to zero . The "variable fuel_type_code_pudl_oil" also presents NA. This suggests that these two variables are not good predictors of fuel cost
+```
+#Dropping non-significant variables and checking prediction on test set
+```{r}
+new_model <- update(model, fuel_cost_per_mmbtu~fuel_received_units+fuel_type_code_pudl_coal+fuel_type_code_pudl_gas, data = train_data1)
+summary(new_model)
+predicted <- predict(new_model, newdata = test_data1)
+R2 <- cor(test_data1$fuel_cost_per_mmbtu, predicted)^2
+RMSE <- sqrt(mean((test_data1$fuel_cost_per_mmbtu - predicted)^2))
+R2
+RMSE
+```
+
