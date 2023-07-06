@@ -133,7 +133,6 @@ fviz_cluster(kmeans_model, data=scaled_train)
 ```
 
 
-##EXTRA CREDIT
 #Use multiple-linear regression to determine the best set of variables to predict fuel_cost_per_mmbtu
 ```{r}
 # Select a subset of variables relevant to fuel cost
